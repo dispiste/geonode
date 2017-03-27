@@ -51,6 +51,9 @@ DEBUG = strtobool(os.getenv('DEBUG', 'True'))
 # otherwise it will raise errors for the missing non-minified dependencies
 DEBUG_STATIC = strtobool(os.getenv('DEBUG_STATIC', 'False'))
 
+#Define email service on GeoNode
+EMAIL_ENABLE = strtobool(os.getenv('EMAIL_ENABLE', 'True'))
+
 # This is needed for integration tests, they require
 # geonode to be listening for GeoServer auth requests.
 os.environ['DJANGO_LIVE_TEST_SERVER_ADDRESS'] = 'localhost:8000'
@@ -730,7 +733,9 @@ MAP_BASELAYERS = [{
     "group": "background"
 }]
 
-SOCIAL_BUTTONS = True
+DISPLAY_SOCIAL = strtobool(os.getenv('DISPLAY_SOCIAL', 'True'))
+DISPLAY_COMMENTS = strtobool(os.getenv('DISPLAY_COMMENTS', 'True'))
+DISPLAY_RATINGS = strtobool(os.getenv('DISPLAY_RATINGS', 'True'))
 
 SOCIAL_ORIGINS = [{
     "label": "Email",
@@ -1075,3 +1080,6 @@ RISKS = {'DEFAULT_LOCATION': None,
          'PDF_GENERATOR': {'NAME': 'wkhtml2pdf',
                            'BIN': '/usr/bin/wkhtml2pdf',
                            'ARGS': []}}
+if EMAIL_ENABLE:
+    #Setting up email backend
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
