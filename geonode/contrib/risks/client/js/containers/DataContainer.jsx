@@ -7,16 +7,22 @@
  */
 const React = require('react');
 const {connect} = require('react-redux');
-const {dataContainerSelector, sliderChartSelector} = require('../selectors/disaster');
+const {dataContainerSelector, chartSelector /*, sliderChartSelector*/} = require('../selectors/disaster');
 
-const {getAnalysisData, getData, setDimIdx, chartSliderUpdate} = require('../actions/disaster');
-const SliderChart = connect(sliderChartSelector, {setDimIdx, chartSliderUpdate})(require('../components/SliderChart'));
+const {getAnalysisData, getData, setDimIdx, getSFurtherResourceData /*, chartSliderUpdate */} = require('../actions/disaster');
+const Chart = connect(chartSelector, {setDimIdx})(require('../components/Chart'));
 
+/* const SliderChart = connect(sliderChartSelector, {setDimIdx, chartSliderUpdate})(require('../components/SliderChart')); */
+const SummaryChart = connect(chartSelector)(require('../components/SummaryChart'));
 
 const DownloadData = require('../components/DownloadData');
 const MoreInfo = require('../components/MoreInfo');
 const Overview = connect(({disaster = {}}) => ({riskItems: disaster.overview || [] }) )(require('../components/Overview'));
 const {Panel, Tooltip, OverlayTrigger} = require('react-bootstrap');
+const Nouislider = require('react-nouislider');
+const {show, hide} = require('react-notification-system-redux');
+const {labelSelector} = require('../selectors/disaster');
+const LabelResource = connect(labelSelector, { show, hide, getData: getSFurtherResourceData })(require('../components/LabelResource'));
 
 const DataContainer = React.createClass({
     propTypes: {
@@ -61,8 +67,11 @@ const DataContainer = React.createClass({
         return data.filter((d) => d[nameIdx] === val ).map((v) => {return {"name": v[dim], "value": parseInt(v[2], 10)}; });
     },
     renderAnalysisData() {
-        const {hazardSet} = this.props.riskAnalysisData;
+        const {dim} = this.props;
+        const {hazardSet, data} = this.props.riskAnalysisData;
         const tooltip = (<Tooltip id={"tooltip-back"} className="disaster">{'Back to Analysis Table'}</Tooltip>);
+        const val = data.dimensions[dim.dim1].values[dim.dim1Idx];
+        const header = data.dimensions[dim.dim1].name + ' ' + val;
         return (
             <div id="disaster-analysis-data-container" className="container-fluid">
                 <div className="row">
@@ -83,7 +92,42 @@ const DataContainer = React.createClass({
                     <p>{hazardSet.purpose}</p>
                 </div>
                 <div id="disaster-chart-container" className="row">
-                    <SliderChart uid={'map_slider'} labelUid={'chart_label_tab'}/>
+                    {/*<SliderChart uid={'map_slider'} labelUid={'chart_label_tab'}/>*/}
+                    <Panel className="chart-panel">
+                        <Chart/>
+                    </Panel>
+                    {data.dimensions[dim.dim1].values.length - 1 === 0 ? (
+                    <div className="slider-box">
+                        <LabelResource uid={'chart_label_tab'} label={header} dimension={data.dimensions[dim.dim1]}/>
+                    </div>
+                    ) : (
+                    <div>
+                        <div className="slider-box">
+                            <LabelResource uid={'chart_label_tab'} label={header} dimension={data.dimensions[dim.dim1]}/>
+                            <Nouislider
+                                range={{min: 0, max: data.dimensions[dim.dim1].values.length - 1}}
+                                start={[dim.dim1Idx]}
+                                step={1}
+                                tooltips={false}
+                                onChange={(idx) => this.props.setDimIdx('dim1Idx', Number.parseInt(idx[0]))}
+                                pips= {{
+                                    mode: 'steps',
+                                    density: 20,
+                                    format: {
+                                        to: (value) => {
+                                            let valF = data.dimensions[dim.dim1].values[value].split(" ")[0];
+                                            return valF.length > 8 ? valF.substring(0, 8) + '...' : valF;
+                                        },
+                                        from: (value) => {
+                                            return value;
+                                        }
+                                    }
+                                }}/>
+                          </div>
+                        <hr/>
+                    </div>
+                    )}
+                    <SummaryChart/>
                 </div>
             </div>
         );

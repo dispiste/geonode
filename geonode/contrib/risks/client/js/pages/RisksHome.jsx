@@ -12,7 +12,7 @@ const {topBarSelector} = require('../selectors/disaster');
 const {toggleControl} = require('../../MapStore2/web/client/actions/controls');
 const Notifications = connect(state => ({notifications: state.notifications}))(require('react-notification-system-redux'));
 const TopBar = connect(topBarSelector, {zoom: zoomInOut, getData, toggleTutorial: toggleControl.bind(null, 'tutorial', null)})(require('../components/TopBar'));
-const RiskDataContainer = require('../containers/RiskDataContainer');
+const DataContainer = require('../containers/DataContainer');
 const RisksMapContainer = require('../containers/RisksMapContainer');
 const Page = require('../../MapStore2/web/client/containers/Page');
 const ConfigUtils = require('../../MapStore2/web/client/utils/ConfigUtils');
@@ -52,7 +52,7 @@ const Home = React.createClass({
                     <TopBar/>
                     <div className="container-fluid">
                         <div className="row">
-                            <RiskDataContainer/>
+                            <DataContainer/>
                             {<RisksMapContainer plugins={plugins}/>}
                         </div>
                     </div>

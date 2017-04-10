@@ -14,12 +14,12 @@ const MapViewer = connect(() => ({}), {
     loadMapConfig: loadMapConfig.bind(null, "/static/js/config-costs.json")
 })(require('../../MapStore2/web/client/containers/MapViewer'));
 const Legend = connect(disasterRiskLayerSelector)(require('../../MapStore2/web/client/components/TOC/fragments/legend/Legend'));
-const {sliderSelector, chartSliderUpdate} = require('../selectors/disaster');
+const {axesSelector} = require('../selectors/disaster');
 const {setDimIdx} = require('../actions/disaster');
 const {setControlProperty, toggleControl} = require('../../MapStore2/web/client/actions/controls');
 const LayerBtn = connect((state) => {return {enabled: state.controls && state.controls.toolbar && state.controls.toolbar.active }; }, {toggleTOC: setControlProperty.bind(null, "toolbar", "active", "toc", true)})(require('../components/LayerBtn'));
 const IdentifyBtn = connect((state) => {return {enabled: state.controls && state.controls.info && state.controls.info.enabled }; }, {toggleTOC: toggleControl.bind(null, "info", "enabled")})(require('../components/IdentifyBtn'));
-const ExtendedSlider = connect(sliderSelector, {setDimIdx, chartSliderUpdate})(require('../components/ExtendedSlider'));
+const AxesSelector = connect(axesSelector, {setDimIdx})(require('../components/AxesSelector'));
 const FurtherResources = connect(({disaster} = {}) => ({
     analysisType: disaster.riskAnalysis && disaster.riskAnalysis.furtherResources && disaster.riskAnalysis.furtherResources.analysisType || [],
     hazardType: disaster.riskAnalysis && disaster.riskAnalysis.furtherResources && disaster.riskAnalysis.furtherResources.hazardType || []
@@ -37,7 +37,7 @@ const MapContainer = (props) => (
                 </div>
                 <div className="container-fluid">
                     <div id="disaster-map-slider" className="row">
-                        <ExtendedSlider uid={'map_slider'} dimIdx={'dim2Idx'} color={'#333'}/>
+                        <AxesSelector/>
                     </div>
                     <div id="disaster-map-legend" className="row">
                         <Legend legendHeigth={20} legendWidth={100}/>

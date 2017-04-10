@@ -14,8 +14,8 @@ const MapViewer = connect(() => ({}), {
     loadMapConfig: loadMapConfig.bind(null, "/static/js/config-risks.json")
 })(require('../../MapStore2/web/client/containers/MapViewer'));
 const Legend = connect(disasterRiskLayerSelector)(require('../../MapStore2/web/client/components/TOC/fragments/legend/Legend'));
-const {drillUpSelector, switchDimSelector, axesSelector} = require('../selectors/disaster');
-const {zoomInOut, toggleDim, setDimIdx, toggleAdminUnit} = require('../actions/disaster');
+const {drillUpSelector, switchDimSelector, axesSelector /*, sliderSelector */ } = require('../selectors/disaster');
+const {zoomInOut, toggleDim, setDimIdx, toggleAdminUnit /*, chartSliderUpdate */ } = require('../actions/disaster');
 const {setControlProperty, toggleControl} = require('../../MapStore2/web/client/actions/controls');
 
 const DrillUpBtn = connect(drillUpSelector, {zoomOut: zoomInOut})(require('../components/DrillUpBtn'));
@@ -23,7 +23,7 @@ const LayerBtn = connect((state) => {return {enabled: state.controls && state.co
 const IdentifyBtn = connect((state) => {return {enabled: state.controls && state.controls.info && state.controls.info.enabled }; }, {toggleTOC: toggleControl.bind(null, "info", "enabled")})(require('../components/IdentifyBtn'));
 const SwitchDimension = connect(switchDimSelector, {toggleDim})(require('../components/SwitchDimension'));
 const AxesSelector = connect(axesSelector, {setDimIdx})(require('../components/AxesSelector'));
-
+/* const ExtendedSlider = connect(sliderSelector, {setDimIdx, chartSliderUpdate})(require('../components/ExtendedSlider')); */
 const SwitchAdminU = connect(({disaster}) => ({
     showSubUnit: disaster.showSubUnit,
     show: disaster.riskAnalysis ? true : false
@@ -46,6 +46,7 @@ const MapContainer = (props) => (
                 <div className="container-fluid">
                     <div id="disaster-map-slider" className="row">
                         <AxesSelector/>
+                        {/*<ExtendedSlider uid={'map_slider'} dimIdx={'dim2Idx'} color={'#333'}/>*/}
                     </div>
                     <div id="disaster-map-legend" className="row">
                         <Legend legendHeigth={20} legendWidth={100}/>
