@@ -1,0 +1,1188 @@
+diff --git a/geonode/base/management/commands/helpers.py b/geonode/base/management/commands/helpers.py
+index 17d6afb..fddbbef 100644
+--- a/geonode/base/management/commands/helpers.py
++++ b/geonode/base/management/commands/helpers.py
+@@ -46,6 +46,10 @@ PG_RESTORE_CMD = config.get('database', 'pgrestore')
+ GS_DATA_DIR = config.get('geoserver', 'datadir')
+ GS_DUMP_VECTOR_DATA = config.getboolean('geoserver', 'dumpvectordata')
+ GS_DUMP_RASTER_DATA = config.getboolean('geoserver', 'dumprasterdata')
++try:
++	GS_USER = config.get('geoserver', 'user')
++except ConfigParser.Error:
++	GS_USER = os.getlogin()
+ 
+ app_names = config.get('fixtures', 'apps').split(',')
+ dump_names = config.get('fixtures', 'dumps').split(',')
+diff --git a/geonode/base/management/commands/restore.py b/geonode/base/management/commands/restore.py
+index 9afe02b..3ab43b1 100755
+--- a/geonode/base/management/commands/restore.py
++++ b/geonode/base/management/commands/restore.py
+@@ -57,6 +57,14 @@ class Command(BaseCommand):
+             default=False,
+             help='Forces the execution without asking for confirmation.'),
+         make_option(
++            '-s',
++	    '--skip-geoserver',
++            dest='skip_geoserver',
++            action='store_true',
++            default=False,
++            help="Skip geoserver data restore"
++        ),
++        make_option(
+             '--backup-file',
+             dest='backup_file',
+             type="string",
+@@ -87,89 +95,91 @@ class Command(BaseCommand):
+             url = settings.OGC_SERVER['default']['PUBLIC_LOCATION']
+             user = settings.OGC_SERVER['default']['USER']
+             passwd = settings.OGC_SERVER['default']['PASSWORD']
+-            geoserver_bk_file = os.path.join(target_folder, 'geoserver_catalog.zip')
+-
+-            print "Restoring 'GeoServer Catalog ["+url+"]' into '"+geoserver_bk_file+"'."
+-            if not os.path.exists(geoserver_bk_file):
+-                raise ValueError('Could not find GeoServer Backup file [' + geoserver_bk_file + ']')
+-
+-            # Best Effort Restore: 'options': {'option': ['BK_BEST_EFFORT=true']}
+-            data = {'restore': {'archiveFile': geoserver_bk_file, 'options': {}}}
+-            headers = {'Content-type': 'application/json'}
+-            r = requests.post(url + 'rest/br/restore/', data=json.dumps(data),
+-                              headers=headers, auth=HTTPBasicAuth(user, passwd))
+-            if (r.status_code > 201):
+-                gs_backup = r.json()
+-                gs_bk_exec_id = gs_backup['restore']['execution']['id']
+-                r = requests.get(url + 'rest/br/restore/' + str(gs_bk_exec_id) + '.json',
+-                                 auth=HTTPBasicAuth(user, passwd))
+-                if (r.status_code == 200):
++            if not options.get('skip_geoserver'):
++                geoserver_bk_file = os.path.join(target_folder, 'geoserver_catalog.zip')
++
++                print "Restoring 'GeoServer Catalog ["+url+"]' into '"+geoserver_bk_file+"'."
++                if not os.path.exists(geoserver_bk_file):
++                    raise ValueError('Could not find GeoServer Backup file [' + geoserver_bk_file + ']')
++
++                # Best Effort Restore: 'options': {'option': ['BK_BEST_EFFORT=true']}
++                data = {'restore': {'archiveFile': geoserver_bk_file, 'options': {}}}
++                headers = {'Content-type': 'application/json'}
++                r = requests.post(url + 'rest/br/restore/', data=json.dumps(data),
++                                  headers=headers, auth=HTTPBasicAuth(user, passwd))
++                if (r.status_code > 201):
++                    print r.text
+                     gs_backup = r.json()
+-                    gs_bk_progress = gs_backup['restore']['execution']['progress']
+-                    print gs_bk_progress
+-
+-                raise ValueError('Could not successfully restore GeoServer catalog [' + url +
+-                                 'rest/br/restore/]: ' + str(r.status_code) + ' - ' + str(r.text))
+-            else:
+-                gs_backup = r.json()
+-                gs_bk_exec_id = gs_backup['restore']['execution']['id']
+-                r = requests.get(url + 'rest/br/restore/' + str(gs_bk_exec_id) + '.json',
+-                                 auth=HTTPBasicAuth(user, passwd))
+-                if (r.status_code == 200):
+-                    gs_bk_exec_status = gs_backup['restore']['execution']['status']
+-                    gs_bk_exec_progress = gs_backup['restore']['execution']['progress']
+-                    gs_bk_exec_progress_updated = '0/0'
+-                    while (gs_bk_exec_status != 'COMPLETED' and gs_bk_exec_status != 'FAILED'):
+-                        if (gs_bk_exec_progress != gs_bk_exec_progress_updated):
+-                            gs_bk_exec_progress_updated = gs_bk_exec_progress
+-                        r = requests.get(url + 'rest/br/restore/' + str(gs_bk_exec_id) + '.json',
+-                                         auth=HTTPBasicAuth(user, passwd))
+-                        if (r.status_code == 200):
+-                            gs_backup = r.json()
+-                            gs_bk_exec_status = gs_backup['restore']['execution']['status']
+-                            gs_bk_exec_progress = gs_backup['restore']['execution']['progress']
+-                            print str(gs_bk_exec_status) + ' - ' + gs_bk_exec_progress
+-                            time.sleep(3)
+-                        else:
+-                            raise ValueError('Could not successfully restore GeoServer catalog [' + url +
+-                                             'rest/br/restore/]: ' + str(r.status_code) + ' - ' + str(r.text))
+-                else:
++                    gs_bk_exec_id = gs_backup['restore']['execution']['id']
++                    r = requests.get(url + 'rest/br/restore/' + str(gs_bk_exec_id) + '.json',
++                                     auth=HTTPBasicAuth(user, passwd))
++                    if (r.status_code == 200):
++                        gs_backup = r.json()
++                        gs_bk_progress = gs_backup['restore']['execution']['progress']
++                        print gs_bk_progress
++
+                     raise ValueError('Could not successfully restore GeoServer catalog [' + url +
+                                      'rest/br/restore/]: ' + str(r.status_code) + ' - ' + str(r.text))
+-
+-            # Restore GeoServer Data
+-            if (helpers.GS_DATA_DIR):
+-                if (helpers.GS_DUMP_RASTER_DATA):
+-                    # Restore '$GS_DATA_DIR/data/geonode'
+-                    gs_data_root = os.path.join(helpers.GS_DATA_DIR, 'data', 'geonode')
+-                    gs_data_folder = os.path.join(target_folder, 'gs_data_dir', 'data', 'geonode')
+-
+-                    try:
+-                        shutil.rmtree(gs_data_root)
+-                    except:
+-                        pass
+-
+-                    if not os.path.exists(gs_data_root):
+-                        os.makedirs(gs_data_root)
+-
+-                    helpers.copy_tree(gs_data_folder, gs_data_root)
+-                    helpers.chmod_tree(gs_data_root)
+-                    print "GeoServer Uploaded Data Restored to '"+gs_data_root+"'."
+-
+-            if (helpers.GS_DUMP_VECTOR_DATA):
+-                # Restore Vectorial Data from DB
+-                datastore = settings.OGC_SERVER['default']['DATASTORE']
+-                if (datastore):
+-                    ogc_db_name = settings.DATABASES[datastore]['NAME']
+-                    ogc_db_user = settings.DATABASES[datastore]['USER']
+-                    ogc_db_passwd = settings.DATABASES[datastore]['PASSWORD']
+-                    ogc_db_host = settings.DATABASES[datastore]['HOST']
+-                    ogc_db_port = settings.DATABASES[datastore]['PORT']
+-
+-                    gs_data_folder = os.path.join(target_folder, 'gs_data_dir', 'data', 'geonode')
+-
+-                    helpers.restore_db(ogc_db_name, ogc_db_user, ogc_db_port, ogc_db_host,
+-                                       ogc_db_passwd, gs_data_folder)
++                else:
++                    gs_backup = r.json()
++                    gs_bk_exec_id = gs_backup['restore']['execution']['id']
++                    r = requests.get(url + 'rest/br/restore/' + str(gs_bk_exec_id) + '.json',
++                                     auth=HTTPBasicAuth(user, passwd))
++                    if (r.status_code == 200):
++                        gs_bk_exec_status = gs_backup['restore']['execution']['status']
++                        gs_bk_exec_progress = gs_backup['restore']['execution']['progress']
++                        gs_bk_exec_progress_updated = '0/0'
++                        while (gs_bk_exec_status != 'COMPLETED' and gs_bk_exec_status != 'FAILED'):
++                            if (gs_bk_exec_progress != gs_bk_exec_progress_updated):
++                                gs_bk_exec_progress_updated = gs_bk_exec_progress
++                            r = requests.get(url + 'rest/br/restore/' + str(gs_bk_exec_id) + '.json',
++                                             auth=HTTPBasicAuth(user, passwd))
++                            if (r.status_code == 200):
++                                gs_backup = r.json()
++                                gs_bk_exec_status = gs_backup['restore']['execution']['status']
++                                gs_bk_exec_progress = gs_backup['restore']['execution']['progress']
++                                print str(gs_bk_exec_status) + ' - ' + gs_bk_exec_progress
++                                time.sleep(3)
++                            else:
++                                raise ValueError('Could not successfully restore GeoServer catalog [' + url +
++                                                 'rest/br/restore/]: ' + str(r.status_code) + ' - ' + str(r.text))
++                    else:
++                        raise ValueError('Could not successfully restore GeoServer catalog [' + url +
++                                         'rest/br/restore/]: ' + str(r.status_code) + ' - ' + str(r.text))
++
++                # Restore GeoServer Data
++                if (helpers.GS_DATA_DIR):
++                    if (helpers.GS_DUMP_RASTER_DATA):
++                        # Restore '$GS_DATA_DIR/data/geonode'
++                        gs_data_root = os.path.join(helpers.GS_DATA_DIR, 'data', 'geonode')
++                        gs_data_folder = os.path.join(target_folder, 'gs_data_dir', 'data', 'geonode')
++
++                        try:
++                            shutil.rmtree(gs_data_root)
++                        except:
++                            pass
++
++                        if not os.path.exists(gs_data_root):
++                            os.makedirs(gs_data_root)
++
++                        helpers.copy_tree(gs_data_folder, gs_data_root)
++                        helpers.chmod_tree(gs_data_root)
++                        print "GeoServer Uploaded Data Restored to '"+gs_data_root+"'."
++
++                if (helpers.GS_DUMP_VECTOR_DATA):
++                    # Restore Vectorial Data from DB
++                    datastore = settings.OGC_SERVER['default']['DATASTORE']
++                    if (datastore):
++                        ogc_db_name = settings.DATABASES[datastore]['NAME']
++                        ogc_db_user = settings.DATABASES[datastore]['USER']
++                        ogc_db_passwd = settings.DATABASES[datastore]['PASSWORD']
++                        ogc_db_host = settings.DATABASES[datastore]['HOST']
++                        ogc_db_port = settings.DATABASES[datastore]['PORT']
++
++                        gs_data_folder = os.path.join(target_folder, 'gs_data_dir', 'data', 'geonode')
++
++                        helpers.restore_db(ogc_db_name, ogc_db_user, ogc_db_port, ogc_db_host,
++                                           ogc_db_passwd, gs_data_folder)
+ 
+             # Prepare Target DB
+             try:
+diff --git a/geonode/base/management/commands/settings.ini b/geonode/base/management/commands/settings.ini
+index 009f913..83f2187 100755
+--- a/geonode/base/management/commands/settings.ini
++++ b/geonode/base/management/commands/settings.ini
+@@ -3,15 +3,16 @@ pgdump = pg_dump
+ pgrestore = pg_restore
+ 
+ [geoserver]
+-datadir = /opt/gs_data_dir
++owner = tomcat8
++datadir = /data/geoserver-data/
+ dumpvectordata = yes
+ dumprasterdata = yes
+ 
+ [fixtures]
+ #NOTE: Order is important
+-apps   = people,account,avatar.avatar,base.backup,base.license,base.topiccategory,base.region,base.resourcebase,base.contactrole,base.link,base.restrictioncodetype,base.spatialrepresentationtype,guardian.userobjectpermission,guardian.groupobjectpermission,layers.uploadsession,layers.style,layers.layer,layers.attribute,layers.layerfile,maps.map,maps.maplayer,maps.mapsnapshot,documents.document,taggit
++apps   = people,account,avatar.avatar,base.backup,base.license,base.topiccategory,base.region,base.link,base.restrictioncodetype,base.spatialrepresentationtype,base.resourcebase,base.contactrole,guardian.userobjectpermission,guardian.groupobjectpermission,layers.uploadsession,layers.style,layers.layer,layers.attribute,layers.layerfile,maps.map,maps.maplayer,maps.mapsnapshot,documents.document,taggit
+ 
+-dumps  = people,accounts,avatars,backups,licenses,topiccategories,regions,resourcebases,contactroles,links,restrictioncodetypes,spatialrepresentationtypes,useropermissions,groupopermissions,uploadsessions,styles,layers,attributes,layerfiles,maps,maplayers,mapsnapshots,documents,tags
++dumps  = people,accounts,avatars,backups,licenses,topiccategories,regions,restrictioncodetypes,spatialrepresentationtypes,resourcebases,contactroles,links,useropermissions,groupopermissions,uploadsessions,styles,layers,attributes,layerfiles,maps,maplayers,mapsnapshots,documents,tags
+ 
+ # Migrate from GN 2.0 to GN 2.4
+ #migrations = base.resourcebase,layers.layer,layers.attribute,maps.map,maps.maplayer
+diff --git a/geonode/contrib/risks/management/commands/importriskdata.py b/geonode/contrib/risks/management/commands/importriskdata.py
+index c0518c2..f1263a2 100644
+--- a/geonode/contrib/risks/management/commands/importriskdata.py
++++ b/geonode/contrib/risks/management/commands/importriskdata.py
+@@ -381,8 +381,11 @@ class Command(BaseCommand):
+                                 value = sheet.cell_value(row_num, col_num)
+                                 print('[%s] (RP-%s) %s / %s' % (scenario.value, rp.value, adm_div.name, value))
+ 
+-                                table_name = rp.layer.typename.split(":")[1] \
+-                                    if ":" in rp.layer.typename else rp.layer.typename
++                                if rp.layer.typename: 
++                                    table_name = rp.layer.typename.split(":")[1] \
++                                        if ":" in rp.layer.typename else rp.layer.typename
++                                else:
++                                    table_name = rp.layer.name
+                                 db_values = {
+                                     'table': table_name,  # From rp.layer
+                                     'the_geom': geos.fromstr(adm_div.geom, srid=adm_div.srid),
+diff --git a/geonode/contrib/risks/static/js/toggle.svg b/geonode/contrib/risks/static/js/toggle.svg
+index b293270..75138bd 100644
+--- a/geonode/contrib/risks/static/js/toggle.svg
++++ b/geonode/contrib/risks/static/js/toggle.svg
+@@ -1 +1 @@
+-<svg xmlns="http://www.w3.org/2000/svg" height="18" width="18"><defs><marker orient="auto" overflow="visible"><path d="M-2.6-2.828L-5.428 0-2.6 2.828.228 0-2.6-2.828z" fill-rule="evenodd" stroke="#000" stroke-width=".4pt"/></marker><marker orient="auto" overflow="visible"><g fill="none" stroke="#000" stroke-width=".8" stroke-linecap="round"><path d="M4.566 4.75L-.652 0"/><path d="M1.544 4.75L-3.674 0"/><path d="M-1.566 4.75L-6.784 0"/><path d="M4.566-5.013L-.652-.263"/><path d="M1.544-5.013l-5.218 4.75"/><path d="M-1.566-5.013l-5.218 4.75"/></g></marker><marker orient="auto" overflow="visible"><path d="M-5.6-5.657L-11.257 0-5.6 5.657.057 0-5.6-5.657z" fill-rule="evenodd" stroke="#000" stroke-width=".8pt"/></marker><marker orient="auto" overflow="visible"><path d="M4.616 0l-6.92 4v-8l6.92 4z" fill-rule="evenodd" stroke="#000" stroke-width=".8pt"/></marker><marker orient="auto" overflow="visible"><path d="M-10.69-4.437L1.328-.017l-12.018 4.42c1.92-2.61 1.91-6.18 0-8.84z" font-size="12" fill-rule="evenodd" stroke-width=".6875" stroke-linejoin="round"/></marker><marker orient="auto" overflow="visible"><path d="M-4.616 0l6.92-4v8l-6.92-4z" fill-rule="evenodd" stroke="#000" stroke-width=".8pt"/></marker><marker orient="auto" overflow="visible"><path d="M10 0l4-4L0 0l14 4-4-4z" fill-rule="evenodd" stroke="#000" stroke-width=".8pt"/></marker><marker orient="auto" overflow="visible"><path d="M10.69 4.437L-1.328.017l12.018-4.42c-1.92 2.61-1.91 6.18 0 8.84z" font-size="12" fill-rule="evenodd" stroke-width=".6875" stroke-linejoin="round"/></marker></defs><path d="M13.18 13.146v-5.81l-5.81 5.81h5.81z" stroke="#000" stroke-width="1.643"/><path d="M12.762 12.727l-6.51-6.51" fill="none" stroke="#000" stroke-width="2.482" stroke-linecap="round"/></svg>
+\ No newline at end of file
++<svg xmlns="http://www.w3.org/2000/svg" height="18" width="18"><defs><marker orient="auto" overflow="visible"><path d="M-2.6-2.828L-5.428 0-2.6 2.828.228 0-2.6-2.828z" fill-rule="evenodd" stroke="#fff" stroke-width=".4pt"/></marker><marker orient="auto" overflow="visible"><g fill="none" stroke="#fff" stroke-width=".8" stroke-linecap="round"><path d="M4.566 4.75L-.652 0"/><path d="M1.544 4.75L-3.674 0"/><path d="M-1.566 4.75L-6.784 0"/><path d="M4.566-5.013L-.652-.263"/><path d="M1.544-5.013l-5.218 4.75"/><path d="M-1.566-5.013l-5.218 4.75"/></g></marker><marker orient="auto" overflow="visible"><path d="M-5.6-5.657L-11.257 0-5.6 5.657.057 0-5.6-5.657z" fill-rule="evenodd" stroke="#fff" stroke-width=".8pt"/></marker><marker orient="auto" overflow="visible"><path d="M4.616 0l-6.92 4v-8l6.92 4z" fill-rule="evenodd" stroke="#fff" stroke-width=".8pt"/></marker><marker orient="auto" overflow="visible"><path d="M-10.69-4.437L1.328-.017l-12.018 4.42c1.92-2.61 1.91-6.18 0-8.84z" font-size="12" fill-rule="evenodd" stroke-width=".6875" stroke-linejoin="round"/></marker><marker orient="auto" overflow="visible"><path d="M-4.616 0l6.92-4v8l-6.92-4z" fill-rule="evenodd" stroke="#fff" stroke-width=".8pt"/></marker><marker orient="auto" overflow="visible"><path d="M10 0l4-4L0 0l14 4-4-4z" fill-rule="evenodd" stroke="#fff" stroke-width=".8pt"/></marker><marker orient="auto" overflow="visible"><path d="M10.69 4.437L-1.328.017l12.018-4.42c-1.92 2.61-1.91 6.18 0 8.84z" font-size="12" fill-rule="evenodd" stroke-width=".6875" stroke-linejoin="round"/></marker></defs><path d="M13.18 13.146v-5.81l-5.81 5.81h5.81z" fill="#fff" stroke="#fff" stroke-width="1.643"/><path d="M12.762 12.727l-6.51-6.51" fill="none" stroke="#fff" stroke-width="2.482" stroke-linecap="round"/></svg>
+\ No newline at end of file
+diff --git a/geonode/locale/af/LC_MESSAGES/django.mo b/geonode/locale/af/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/af/LC_MESSAGES/django.po b/geonode/locale/af/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/af/LC_MESSAGES/djangojs.mo b/geonode/locale/af/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/af/LC_MESSAGES/djangojs.po b/geonode/locale/af/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/al/LC_MESSAGES/django.mo b/geonode/locale/al/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/al/LC_MESSAGES/django.po b/geonode/locale/al/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/al/LC_MESSAGES/djangojs.mo b/geonode/locale/al/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/al/LC_MESSAGES/djangojs.po b/geonode/locale/al/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/am/LC_MESSAGES/django.mo b/geonode/locale/am/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/am/LC_MESSAGES/django.po b/geonode/locale/am/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/am/LC_MESSAGES/djangojs.mo b/geonode/locale/am/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/am/LC_MESSAGES/djangojs.po b/geonode/locale/am/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ar/LC_MESSAGES/django.mo b/geonode/locale/ar/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ar/LC_MESSAGES/django.po b/geonode/locale/ar/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ar/LC_MESSAGES/djangojs.mo b/geonode/locale/ar/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ar/LC_MESSAGES/djangojs.po b/geonode/locale/ar/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/bg_BG/LC_MESSAGES/django.mo b/geonode/locale/bg_BG/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/bg_BG/LC_MESSAGES/django.po b/geonode/locale/bg_BG/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/bg_BG/LC_MESSAGES/djangojs.mo b/geonode/locale/bg_BG/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/bg_BG/LC_MESSAGES/djangojs.po b/geonode/locale/bg_BG/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/bn/LC_MESSAGES/django.mo b/geonode/locale/bn/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/bn/LC_MESSAGES/django.po b/geonode/locale/bn/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/bn/LC_MESSAGES/djangojs.mo b/geonode/locale/bn/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/bn/LC_MESSAGES/djangojs.po b/geonode/locale/bn/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/de/LC_MESSAGES/django.mo b/geonode/locale/de/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/de/LC_MESSAGES/django.po b/geonode/locale/de/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/de/LC_MESSAGES/djangojs.mo b/geonode/locale/de/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/de/LC_MESSAGES/djangojs.po b/geonode/locale/de/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/el/LC_MESSAGES/django.mo b/geonode/locale/el/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/el/LC_MESSAGES/django.po b/geonode/locale/el/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/el/LC_MESSAGES/djangojs.mo b/geonode/locale/el/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/el/LC_MESSAGES/djangojs.po b/geonode/locale/el/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/en/LC_MESSAGES/django.mo b/geonode/locale/en/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/en/LC_MESSAGES/django.po b/geonode/locale/en/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/en/LC_MESSAGES/djangojs.mo b/geonode/locale/en/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/en/LC_MESSAGES/djangojs.po b/geonode/locale/en/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/es/LC_MESSAGES/django.mo b/geonode/locale/es/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/es/LC_MESSAGES/django.po b/geonode/locale/es/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/es/LC_MESSAGES/djangojs.mo b/geonode/locale/es/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/es/LC_MESSAGES/djangojs.po b/geonode/locale/es/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fa/LC_MESSAGES/django.mo b/geonode/locale/fa/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fa/LC_MESSAGES/django.po b/geonode/locale/fa/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fa/LC_MESSAGES/djangojs.mo b/geonode/locale/fa/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fa/LC_MESSAGES/djangojs.po b/geonode/locale/fa/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fa_IR/LC_MESSAGES/django.mo b/geonode/locale/fa_IR/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fa_IR/LC_MESSAGES/django.po b/geonode/locale/fa_IR/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fa_IR/LC_MESSAGES/djangojs.mo b/geonode/locale/fa_IR/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fa_IR/LC_MESSAGES/djangojs.po b/geonode/locale/fa_IR/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fi/LC_MESSAGES/django.mo b/geonode/locale/fi/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fi/LC_MESSAGES/django.po b/geonode/locale/fi/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fi/LC_MESSAGES/djangojs.mo b/geonode/locale/fi/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fi/LC_MESSAGES/djangojs.po b/geonode/locale/fi/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fil/LC_MESSAGES/django.mo b/geonode/locale/fil/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fil/LC_MESSAGES/django.po b/geonode/locale/fil/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fil/LC_MESSAGES/djangojs.mo b/geonode/locale/fil/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fil/LC_MESSAGES/djangojs.po b/geonode/locale/fil/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fr/LC_MESSAGES/django.mo b/geonode/locale/fr/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fr/LC_MESSAGES/django.po b/geonode/locale/fr/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fr/LC_MESSAGES/djangojs.mo b/geonode/locale/fr/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/fr/LC_MESSAGES/djangojs.po b/geonode/locale/fr/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/hu/LC_MESSAGES/django.mo b/geonode/locale/hu/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/hu/LC_MESSAGES/django.po b/geonode/locale/hu/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/hu/LC_MESSAGES/djangojs.mo b/geonode/locale/hu/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/hu/LC_MESSAGES/djangojs.po b/geonode/locale/hu/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/id/LC_MESSAGES/django.mo b/geonode/locale/id/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/id/LC_MESSAGES/django.po b/geonode/locale/id/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/id/LC_MESSAGES/djangojs.mo b/geonode/locale/id/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/id/LC_MESSAGES/djangojs.po b/geonode/locale/id/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/it/LC_MESSAGES/django.mo b/geonode/locale/it/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/it/LC_MESSAGES/django.po b/geonode/locale/it/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/it/LC_MESSAGES/djangojs.mo b/geonode/locale/it/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/it/LC_MESSAGES/djangojs.po b/geonode/locale/it/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ja/LC_MESSAGES/django.mo b/geonode/locale/ja/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ja/LC_MESSAGES/django.po b/geonode/locale/ja/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ja/LC_MESSAGES/djangojs.mo b/geonode/locale/ja/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ja/LC_MESSAGES/djangojs.po b/geonode/locale/ja/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ka/LC_MESSAGES/django.mo b/geonode/locale/ka/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ka/LC_MESSAGES/django.po b/geonode/locale/ka/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ka/LC_MESSAGES/djangojs.mo b/geonode/locale/ka/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ka/LC_MESSAGES/djangojs.po b/geonode/locale/ka/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/km/LC_MESSAGES/django.mo b/geonode/locale/km/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/km/LC_MESSAGES/django.po b/geonode/locale/km/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/km/LC_MESSAGES/djangojs.mo b/geonode/locale/km/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/km/LC_MESSAGES/djangojs.po b/geonode/locale/km/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ko/LC_MESSAGES/django.mo b/geonode/locale/ko/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ko/LC_MESSAGES/django.po b/geonode/locale/ko/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ko/LC_MESSAGES/djangojs.mo b/geonode/locale/ko/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ko/LC_MESSAGES/djangojs.po b/geonode/locale/ko/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/lt/LC_MESSAGES/django.mo b/geonode/locale/lt/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/lt/LC_MESSAGES/django.po b/geonode/locale/lt/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/lt/LC_MESSAGES/djangojs.mo b/geonode/locale/lt/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/lt/LC_MESSAGES/djangojs.po b/geonode/locale/lt/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ne/LC_MESSAGES/django.mo b/geonode/locale/ne/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ne/LC_MESSAGES/django.po b/geonode/locale/ne/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ne/LC_MESSAGES/djangojs.mo b/geonode/locale/ne/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ne/LC_MESSAGES/djangojs.po b/geonode/locale/ne/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/nl_NL/LC_MESSAGES/django.mo b/geonode/locale/nl_NL/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/nl_NL/LC_MESSAGES/django.po b/geonode/locale/nl_NL/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/nl_NL/LC_MESSAGES/djangojs.mo b/geonode/locale/nl_NL/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/nl_NL/LC_MESSAGES/djangojs.po b/geonode/locale/nl_NL/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/no/LC_MESSAGES/django.mo b/geonode/locale/no/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/no/LC_MESSAGES/django.po b/geonode/locale/no/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/no/LC_MESSAGES/djangojs.mo b/geonode/locale/no/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/no/LC_MESSAGES/djangojs.po b/geonode/locale/no/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/pl/LC_MESSAGES/django.mo b/geonode/locale/pl/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/pl/LC_MESSAGES/django.po b/geonode/locale/pl/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/pl/LC_MESSAGES/djangojs.mo b/geonode/locale/pl/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/pl/LC_MESSAGES/djangojs.po b/geonode/locale/pl/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/pt/LC_MESSAGES/django.mo b/geonode/locale/pt/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/pt/LC_MESSAGES/django.po b/geonode/locale/pt/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/pt/LC_MESSAGES/djangojs.mo b/geonode/locale/pt/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/pt/LC_MESSAGES/djangojs.po b/geonode/locale/pt/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/pt_BR/LC_MESSAGES/django.mo b/geonode/locale/pt_BR/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/pt_BR/LC_MESSAGES/django.po b/geonode/locale/pt_BR/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/pt_BR/LC_MESSAGES/djangojs.mo b/geonode/locale/pt_BR/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/pt_BR/LC_MESSAGES/djangojs.po b/geonode/locale/pt_BR/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ro/LC_MESSAGES/django.mo b/geonode/locale/ro/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ro/LC_MESSAGES/django.po b/geonode/locale/ro/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ro/LC_MESSAGES/djangojs.mo b/geonode/locale/ro/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ro/LC_MESSAGES/djangojs.po b/geonode/locale/ro/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ru/LC_MESSAGES/django.mo b/geonode/locale/ru/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ru/LC_MESSAGES/django.po b/geonode/locale/ru/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ru/LC_MESSAGES/djangojs.mo b/geonode/locale/ru/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ru/LC_MESSAGES/djangojs.po b/geonode/locale/ru/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/si/LC_MESSAGES/django.mo b/geonode/locale/si/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/si/LC_MESSAGES/django.po b/geonode/locale/si/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/si/LC_MESSAGES/djangojs.mo b/geonode/locale/si/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/si/LC_MESSAGES/djangojs.po b/geonode/locale/si/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/sq/LC_MESSAGES/django.mo b/geonode/locale/sq/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/sq/LC_MESSAGES/django.po b/geonode/locale/sq/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/sq/LC_MESSAGES/djangojs.mo b/geonode/locale/sq/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/sq/LC_MESSAGES/djangojs.po b/geonode/locale/sq/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/sv/LC_MESSAGES/django.mo b/geonode/locale/sv/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/sv/LC_MESSAGES/django.po b/geonode/locale/sv/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/sv/LC_MESSAGES/djangojs.mo b/geonode/locale/sv/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/sv/LC_MESSAGES/djangojs.po b/geonode/locale/sv/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/sw/LC_MESSAGES/django.mo b/geonode/locale/sw/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/sw/LC_MESSAGES/django.po b/geonode/locale/sw/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/sw/LC_MESSAGES/djangojs.mo b/geonode/locale/sw/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/sw/LC_MESSAGES/djangojs.po b/geonode/locale/sw/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ta/LC_MESSAGES/django.mo b/geonode/locale/ta/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ta/LC_MESSAGES/django.po b/geonode/locale/ta/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ta/LC_MESSAGES/djangojs.mo b/geonode/locale/ta/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/ta/LC_MESSAGES/djangojs.po b/geonode/locale/ta/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/th/LC_MESSAGES/django.mo b/geonode/locale/th/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/th/LC_MESSAGES/django.po b/geonode/locale/th/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/th/LC_MESSAGES/djangojs.mo b/geonode/locale/th/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/th/LC_MESSAGES/djangojs.po b/geonode/locale/th/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/tl/LC_MESSAGES/django.mo b/geonode/locale/tl/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/tl/LC_MESSAGES/django.po b/geonode/locale/tl/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/tl/LC_MESSAGES/djangojs.mo b/geonode/locale/tl/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/tl/LC_MESSAGES/djangojs.po b/geonode/locale/tl/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/uk/LC_MESSAGES/django.mo b/geonode/locale/uk/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/uk/LC_MESSAGES/django.po b/geonode/locale/uk/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/uk/LC_MESSAGES/djangojs.mo b/geonode/locale/uk/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/uk/LC_MESSAGES/djangojs.po b/geonode/locale/uk/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/vi/LC_MESSAGES/django.mo b/geonode/locale/vi/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/vi/LC_MESSAGES/django.po b/geonode/locale/vi/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/vi/LC_MESSAGES/djangojs.mo b/geonode/locale/vi/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/vi/LC_MESSAGES/djangojs.po b/geonode/locale/vi/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/zh/LC_MESSAGES/django.mo b/geonode/locale/zh/LC_MESSAGES/django.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/zh/LC_MESSAGES/django.po b/geonode/locale/zh/LC_MESSAGES/django.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/zh/LC_MESSAGES/djangojs.mo b/geonode/locale/zh/LC_MESSAGES/djangojs.mo
+old mode 100644
+new mode 100755
+diff --git a/geonode/locale/zh/LC_MESSAGES/djangojs.po b/geonode/locale/zh/LC_MESSAGES/djangojs.po
+old mode 100644
+new mode 100755
+diff --git a/geonode/settings.py b/geonode/settings.py
+index 73b0f56..c592041 100644
+--- a/geonode/settings.py
++++ b/geonode/settings.py
+@@ -1016,10 +1016,10 @@ djcelery.setup_loader()
+ # 2. Creating a downstream project, if you are doing a lot of customization.
+ # 3. Override settings in a local_settings.py file, legacy.
+ # Load more settings from a file called local_settings.py if it exists
+-try:
+-    from local_settings import *  # noqa
+-except ImportError:
+-    pass
++#try:
++#    from local_settings import *  # noqa
++#except ImportError:
++#    pass
+ 
+ 
+ # Load additonal basemaps, see geonode/contrib/api_basemap/README.md
+diff --git a/geonode/static/.bowerrc b/geonode/static/.bowerrc
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/bower.json b/geonode/static/bower.json
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/css/base.css b/geonode/static/geonode/css/base.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/css/ext-compatibility.css b/geonode/static/geonode/css/ext-compatibility.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/css/fileuploadfield.css b/geonode/static/geonode/css/fileuploadfield.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/css/font-awesome.css b/geonode/static/geonode/css/font-awesome.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/css/font-awesome.min.css b/geonode/static/geonode/css/font-awesome.min.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/css/geoexplorer/map_geoexplorer.css b/geonode/static/geonode/css/geoexplorer/map_geoexplorer.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/css/map_leaflet.css b/geonode/static/geonode/css/map_leaflet.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/css/social_twitter.css b/geonode/static/geonode/css/social_twitter.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/FontAwesome.otf b/geonode/static/geonode/fonts/FontAwesome.otf
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/fontawesome-webfont.eot b/geonode/static/geonode/fonts/fontawesome-webfont.eot
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/fontawesome-webfont.svg b/geonode/static/geonode/fonts/fontawesome-webfont.svg
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/fontawesome-webfont.ttf b/geonode/static/geonode/fonts/fontawesome-webfont.ttf
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/fontawesome-webfont.woff b/geonode/static/geonode/fonts/fontawesome-webfont.woff
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/fontawesome-webfont.woff2 b/geonode/static/geonode/fonts/fontawesome-webfont.woff2
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/glyphicons-halflings-regular.eot b/geonode/static/geonode/fonts/glyphicons-halflings-regular.eot
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/glyphicons-halflings-regular.svg b/geonode/static/geonode/fonts/glyphicons-halflings-regular.svg
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/glyphicons-halflings-regular.ttf b/geonode/static/geonode/fonts/glyphicons-halflings-regular.ttf
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/glyphicons-halflings-regular.woff b/geonode/static/geonode/fonts/glyphicons-halflings-regular.woff
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/glyphicons-halflings-regular.woff2 b/geonode/static/geonode/fonts/glyphicons-halflings-regular.woff2
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/lato_bold.ttf b/geonode/static/geonode/fonts/lato_bold.ttf
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/lato_light.ttf b/geonode/static/geonode/fonts/lato_light.ttf
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/fonts/lato_regular.ttf b/geonode/static/geonode/fonts/lato_regular.ttf
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/arrows_gr_sm.png b/geonode/static/geonode/img/arrows_gr_sm.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/avatar.png b/geonode/static/geonode/img/avatar.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/calendar_in.png b/geonode/static/geonode/img/calendar_in.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/default-avatar.jpg b/geonode/static/geonode/img/default-avatar.jpg
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/facebook.png b/geonode/static/geonode/img/facebook.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/favicon.ico b/geonode/static/geonode/img/favicon.ico
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/glyphicons-halflings-white.png b/geonode/static/geonode/img/glyphicons-halflings-white.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/glyphicons-halflings.png b/geonode/static/geonode/img/glyphicons-halflings.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/google_plus.png b/geonode/static/geonode/img/google_plus.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/loading.gif b/geonode/static/geonode/img/loading.gif
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/logo-bg.png b/geonode/static/geonode/img/logo-bg.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/logo.png b/geonode/static/geonode/img/logo.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/missing_thumb.png b/geonode/static/geonode/img/missing_thumb.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/pointer.png b/geonode/static/geonode/img/pointer.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/img/twitter.png b/geonode/static/geonode/img/twitter.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/base/base.js b/geonode/static/geonode/js/base/base.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/extjs/GeoNode-GeoExplorer.js b/geonode/static/geonode/js/extjs/GeoNode-GeoExplorer.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/extjs/GeoNode-mixin.js b/geonode/static/geonode/js/extjs/GeoNode-mixin.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/extjs/Geonode-CatalogueApiSearch.js b/geonode/static/geonode/js/extjs/Geonode-CatalogueApiSearch.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/extjs/ux.js b/geonode/static/geonode/js/extjs/ux.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/search/cart.js b/geonode/static/geonode/js/search/cart.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/search/explore.js b/geonode/static/geonode/js/search/explore.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/search/search.js b/geonode/static/geonode/js/search/search.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/status/UploadSession.js b/geonode/static/geonode/js/status/UploadSession.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/status/main.js b/geonode/static/geonode/js/status/main.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/status/status.js b/geonode/static/geonode/js/status/status.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/templates/cart.html b/geonode/static/geonode/js/templates/cart.html
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/templates/upload.html b/geonode/static/geonode/js/templates/upload.html
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/tests/SpecRunner.html b/geonode/static/geonode/js/tests/SpecRunner.html
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/tests/test.js b/geonode/static/geonode/js/tests/test.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/upload/FileType.js b/geonode/static/geonode/js/upload/FileType.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/upload/FileTypes.js b/geonode/static/geonode/js/upload/FileTypes.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/upload/LayerInfo.js b/geonode/static/geonode/js/upload/LayerInfo.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/upload/common.js b/geonode/static/geonode/js/upload/common.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/upload/csv.js b/geonode/static/geonode/js/upload/csv.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/upload/main.js b/geonode/static/geonode/js/upload/main.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/upload/path.js b/geonode/static/geonode/js/upload/path.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/upload/srs.js b/geonode/static/geonode/js/upload/srs.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/upload/time.js b/geonode/static/geonode/js/upload/time.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/upload/upload.js b/geonode/static/geonode/js/upload/upload.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/utils/batch_ops.js b/geonode/static/geonode/js/utils/batch_ops.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/utils/thumbnail.js b/geonode/static/geonode/js/utils/thumbnail.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/js/utils/utils.js b/geonode/static/geonode/js/utils/utils.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/less/base.less b/geonode/static/geonode/less/base.less
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/geonode/less/fonts.less b/geonode/static/geonode/less/fonts.less
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/gruntfile.js b/geonode/static/gruntfile.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/L.Control.Pan.css b/geonode/static/lib/css/L.Control.Pan.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/assets.min.css b/geonode/static/lib/css/assets.min.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/bootstrap-datetimepicker.min.css b/geonode/static/lib/css/bootstrap-datetimepicker.min.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/bootstrap-select.min.css b/geonode/static/lib/css/bootstrap-select.min.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/bootstrap-tokenfield.min.css b/geonode/static/lib/css/bootstrap-tokenfield.min.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/bootstrap-wysihtml5-0.0.2.css b/geonode/static/lib/css/bootstrap-wysihtml5-0.0.2.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/fastselect.min.css b/geonode/static/lib/css/fastselect.min.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/fullscreen.png b/geonode/static/lib/css/fullscreen.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/fullscreen@2x.png b/geonode/static/lib/css/fullscreen@2x.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/jquery.tree-multiselect.min.css b/geonode/static/lib/css/jquery.tree-multiselect.min.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/jquery.treefilter.css b/geonode/static/lib/css/jquery.treefilter.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/leaflet.fullscreen.css b/geonode/static/lib/css/leaflet.fullscreen.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/css/tokenfield-typeahead.min.css b/geonode/static/lib/css/tokenfield-typeahead.min.css
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/ZeroClipboard.swf b/geonode/static/lib/img/ZeroClipboard.swf
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/animated-overlay.gif b/geonode/static/lib/img/animated-overlay.gif
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/back_disabled.png b/geonode/static/lib/img/back_disabled.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/back_enabled.png b/geonode/static/lib/img/back_enabled.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/back_enabled_hover.png b/geonode/static/lib/img/back_enabled_hover.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/cancel-off.png b/geonode/static/lib/img/cancel-off.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/cancel-on.png b/geonode/static/lib/img/cancel-on.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/forward_disabled.png b/geonode/static/lib/img/forward_disabled.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/forward_enabled.png b/geonode/static/lib/img/forward_enabled.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/forward_enabled_hover.png b/geonode/static/lib/img/forward_enabled_hover.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/glyphicons-halflings-white.png b/geonode/static/lib/img/glyphicons-halflings-white.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/glyphicons-halflings.png b/geonode/static/lib/img/glyphicons-halflings.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/map.png b/geonode/static/lib/img/map.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/map_add.png b/geonode/static/lib/img/map_add.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/map_delete.png b/geonode/static/lib/img/map_delete.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/map_edit.png b/geonode/static/lib/img/map_edit.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/map_go.png b/geonode/static/lib/img/map_go.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/map_magnify.png b/geonode/static/lib/img/map_magnify.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/select2.png b/geonode/static/lib/img/select2.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/select2x2.png b/geonode/static/lib/img/select2x2.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/sort_asc.png b/geonode/static/lib/img/sort_asc.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/sort_asc_disabled.png b/geonode/static/lib/img/sort_asc_disabled.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/sort_both.png b/geonode/static/lib/img/sort_both.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/sort_desc.png b/geonode/static/lib/img/sort_desc.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/sort_desc_disabled.png b/geonode/static/lib/img/sort_desc_disabled.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/spinner.gif b/geonode/static/lib/img/spinner.gif
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/star-half.png b/geonode/static/lib/img/star-half.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/star-off.png b/geonode/static/lib/img/star-off.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/star-on.png b/geonode/static/lib/img/star-on.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/img/switch.png b/geonode/static/lib/img/switch.png
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/L.Control.Pan.js b/geonode/static/lib/js/L.Control.Pan.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/Leaflet.fullscreen.min.js b/geonode/static/lib/js/Leaflet.fullscreen.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/assets.min.js b/geonode/static/lib/js/assets.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/bootstrap-datetimepicker.min.js b/geonode/static/lib/js/bootstrap-datetimepicker.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/bootstrap-select.min.js b/geonode/static/lib/js/bootstrap-select.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/bootstrap-tokenfield.min.js b/geonode/static/lib/js/bootstrap-tokenfield.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/bootstrap-wysihtml5-0.0.2.min.js b/geonode/static/lib/js/bootstrap-wysihtml5-0.0.2.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/bootstrap.js b/geonode/static/lib/js/bootstrap.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/esri-leaflet.js b/geonode/static/lib/js/esri-leaflet.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/fastselect.standalone.min.js b/geonode/static/lib/js/fastselect.standalone.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/jquery-ui.custom.min.js b/geonode/static/lib/js/jquery-ui.custom.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/jquery.ajaxQueue.min.js b/geonode/static/lib/js/jquery.ajaxQueue.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/jquery.raty.min.js b/geonode/static/lib/js/jquery.raty.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/jquery.tree-multiselect.min.js b/geonode/static/lib/js/jquery.tree-multiselect.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/jquery.treefilter-min.js b/geonode/static/lib/js/jquery.treefilter-min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/moment-with-locales.min.js b/geonode/static/lib/js/moment-with-locales.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/npm.js b/geonode/static/lib/js/npm.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/require.js b/geonode/static/lib/js/require.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/text.js b/geonode/static/lib/js/text.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/underscore-min.js b/geonode/static/lib/js/underscore-min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/underscore.js b/geonode/static/lib/js/underscore.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/lib/js/waypoints.min.js b/geonode/static/lib/js/waypoints.min.js
+old mode 100644
+new mode 100755
+diff --git a/geonode/static/package.json b/geonode/static/package.json
+old mode 100644
+new mode 100755
+diff --git a/geonode/templates/metadata_form_js.html b/geonode/templates/metadata_form_js.html
+index cdb3cbc..5c16d85 100644
+--- a/geonode/templates/metadata_form_js.html
++++ b/geonode/templates/metadata_form_js.html
+@@ -494,6 +494,7 @@
+             }
+ 
+     		    $('#id_resource-keywords').tokenfield({
++			createTokensOnBlur: true,
+     		        autocomplete: {
+     		            source: kws,
+     		            delay: 100

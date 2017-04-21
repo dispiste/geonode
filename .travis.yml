@@ -1,0 +1,59 @@
+dist: trusty
+
+sudo: required
+
+language: python
+
+python:
+  - "2.7"
+
+branches:
+  only:
+    - afg_risks_contrib
+
+install:
+  - sudo add-apt-repository -y ppa:webupd8team/java
+  - sudo apt-get -qq -m -y --force-yes update
+  - sudo apt-get -qq -m -y --force-yes remove postgresql* mysql*
+  - sudo apt-get -qq -m -y --force-yes -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confnew upgrade
+  - sudo apt-get install -q -y -f --force-yes libgdal1h gdal-bin libgdal-dev
+  - sudo apt-get install -q -y -f --force-yes postgresql-server-dev-9.5 postgresql-9.5-postgis-2.2
+  - sudo apt-get install -q -y -f --force-yes python-virtualenv python-imaging python-lxml python-pyproj python-shapely python-nose python-httplib2 python-httplib2 gettext
+  - sudo apt-get install -q -y -f --force-yes oracle-java8-installer ant maven2 --no-install-recommends
+  - sudo update-java-alternatives --set java-8-oracle
+  - pip install -r requirements.txt
+  - pip install -e . --upgrade
+  - gdal-config --version
+  - pip install pygdal==`gdal-config --version`
+  - pip install psycopg2
+  - pip install coveralls
+
+before_script:
+  - sudo service postgresql restart
+  - psql -c "CREATE USER geonode WITH PASSWORD 'geonode' SUPERUSER CREATEDB CREATEROLE INHERIT LOGIN;" -U postgres
+  - psql -c "CREATE DATABASE geonode WITH OWNER geonode;" -U postgres
+  - psql -c "CREATE DATABASE geonode_data WITH OWNER geonode;" -U postgres
+  - psql -c "CREATE EXTENSION postgis;" -d geonode_data -U postgres
+  - psql -c "GRANT ALL ON geometry_columns TO PUBLIC;" -d geonode_data -U postgres
+  - psql -c "GRANT ALL ON spatial_ref_sys TO PUBLIC;" -d geonode_data -U postgres
+  - mv geonode/local_settings.py.psql_test geonode/local_settings.py
+  - paver setup
+  - paver start_geoserver
+  - sleep 30
+
+script:
+  - coverage run --branch --source=geonode manage.py test geonode.contrib.risks.tests.smoke
+  - coverage run --branch --source=geonode manage.py test geonode.contrib.risks.tests.views
+
+
+
+after_script:
+  - paver reset_hard
+
+after_success:
+  - coveralls
+
+notifications:
+  email:
+    - alessio.fabiani@gmail.com
+    - c.statkiewicz@gmail.com
